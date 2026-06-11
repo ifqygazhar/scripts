@@ -7,6 +7,26 @@ echo "=================================================="
 echo "  Starting Docker & dockur/windows Installation   "
 echo "=================================================="
 
+# --- Version Selection ---
+echo "Available Windows Versions:"
+echo "  11   - Windows 11 Pro (7.9 GB)"
+echo "  11l  - Windows 11 LTSC (4.7 GB)"
+echo "  10   - Windows 10 Pro (5.7 GB)"
+echo "  10l  - Windows 10 LTSC (4.6 GB)"
+echo "  8e   - Windows 8.1 Enterprise (3.7 GB)"
+echo "  7u   - Windows 7 Ultimate (3.1 GB)"
+echo "  xp   - Windows XP Professional (0.6 GB)"
+echo "  2025 - Windows Server 2025 (7.6 GB)"
+echo "  2022 - Windows Server 2022 (6.0 GB)"
+echo "  2019 - Windows Server 2019 (5.3 GB)"
+echo "--------------------------------------------------"
+read -p "Enter the version code you want to install (Default is 11): " WIN_VERSION
+
+# Set default to 11 if the user leaves it blank
+WIN_VERSION=${WIN_VERSION:-11}
+echo "Selected Version: $WIN_VERSION"
+echo "=================================================="
+
 # 1. Update & Upgrade System Packages
 echo "--> Updating system package list..."
 sudo apt update && sudo apt upgrade -y
@@ -48,17 +68,27 @@ else
     git clone https://github.com/dockur/windows.git
 fi
 
-# 7. Execute Docker Compose
-echo "--> Navigating to the directory and running docker compose..."
+# 7. Apply the selected version and Execute Docker Compose
+echo "--> Applying Windows Version: $WIN_VERSION..."
 cd windows
+
+# Create a docker-compose override file to safely inject the VERSION variable
+cat <<EOF > docker-compose.override.yml
+services:
+  windows:
+    environment:
+      VERSION: "${WIN_VERSION}"
+EOF
+
+echo "--> Starting docker compose in the background..."
 sudo docker compose up -d
 
 # Finish
 echo "=================================================="
 echo "                 PROCESS COMPLETE!                "
 echo "=================================================="
-echo "Docker has been successfully installed and the Windows container is running."
-echo "Windows will automatically download the ISO and run the setup in the background."
+echo "Docker has been installed and the container is running."
+echo "Windows version '${WIN_VERSION}' will automatically download and install."
 echo ""
 echo "Access the installation via Web Browser at:"
 echo "http://YOUR_VPS_IP:8006"
