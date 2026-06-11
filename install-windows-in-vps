@@ -1,0 +1,65 @@
+#!/bin/bash
+
+# Stop the script if any command fails
+set -e
+
+echo "=================================================="
+echo "  Starting Docker & dockur/windows Installation   "
+echo "=================================================="
+
+# 1. Update & Upgrade System Packages
+echo "--> Updating system package list..."
+sudo apt update && sudo apt upgrade -y
+
+# 2. Install Basic Dependencies
+echo "--> Installing Git, Curl, and CPU Checker..."
+sudo apt install -y git curl cpu-checker
+
+# 3. Check KVM Validation (Crucial for Windows Performance)
+echo "--> Checking KVM Virtualization status..."
+if [ -e /dev/kvm ]; then
+    echo "[OK] /dev/kvm found. KVM acceleration is active."
+else
+    echo "[WARNING] /dev/kvm NOT found!"
+    echo "Windows might run very slowly or fail to boot."
+    echo "Please ensure your VPS supports KVM / Nested Virtualization."
+    read -p "Do you still want to continue? (y/n): " temp_choice
+    if [ "$temp_choice" != "y" ]; then
+        echo "Installation aborted."
+        exit 1
+    fi
+fi
+
+# 4. Install Docker Using the Official Script
+echo "--> Downloading and installing the latest version of Docker..."
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+rm get-docker.sh
+
+# 5. Ensure Docker Service is Running
+echo "--> Enabling and starting Docker service..."
+sudo systemctl enable --now docker
+
+# 6. Clone the dockur/windows Repository
+echo "--> Cloning dockur/windows repository..."
+if [ -d "windows" ]; then
+    echo "The 'windows' directory already exists. Skipping clone..."
+else
+    git clone https://github.com/dockur/windows.git
+fi
+
+# 7. Execute Docker Compose
+echo "--> Navigating to the directory and running docker compose..."
+cd windows
+sudo docker compose up -d
+
+# Finish
+echo "=================================================="
+echo "                 PROCESS COMPLETE!                "
+echo "=================================================="
+echo "Docker has been successfully installed and the Windows container is running."
+echo "Windows will automatically download the ISO and run the setup in the background."
+echo ""
+echo "Access the installation via Web Browser at:"
+echo "http://YOUR_VPS_IP:8006"
+echo "=================================================="
