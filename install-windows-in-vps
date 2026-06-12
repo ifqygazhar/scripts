@@ -25,6 +25,17 @@ read -p "Enter the version code you want to install (Default is 11): " WIN_VERSI
 # Set default to 11 if the user leaves it blank
 WIN_VERSION=${WIN_VERSION:-11}
 echo "Selected Version: $WIN_VERSION"
+
+# --- Storage Selection ---
+echo "--------------------------------------------------"
+echo "Disk Size Allocation"
+echo "Example: 50G, 200G, 250G"
+echo "Warning: Do not allocate 100% of your VPS storage. Leave space for Ubuntu!"
+read -p "Enter the disk size you want to allocate (Default is 64G): " DISK_SIZE
+
+# Set default to 64G if the user leaves it blank
+DISK_SIZE=${DISK_SIZE:-64G}
+echo "Selected Disk Size: $DISK_SIZE"
 echo "=================================================="
 
 # 1. Update & Upgrade System Packages
@@ -68,16 +79,17 @@ else
     git clone https://github.com/dockur/windows.git
 fi
 
-# 7. Apply the selected version and Execute Docker Compose
-echo "--> Applying Windows Version: $WIN_VERSION..."
+# 7. Apply the selected settings and Execute Docker Compose
+echo "--> Applying Windows Version: $WIN_VERSION and Disk Size: $DISK_SIZE..."
 cd windows
 
-# Create a docker-compose override file to safely inject the VERSION variable
+# Create a docker-compose override file to safely inject VERSION and DISK_SIZE variables
 cat <<EOF > docker-compose.override.yml
 services:
   windows:
     environment:
       VERSION: "${WIN_VERSION}"
+      DISK_SIZE: "${DISK_SIZE}"
 EOF
 
 echo "--> Starting docker compose in the background..."
@@ -88,7 +100,7 @@ echo "=================================================="
 echo "                 PROCESS COMPLETE!                "
 echo "=================================================="
 echo "Docker has been installed and the container is running."
-echo "Windows version '${WIN_VERSION}' will automatically download and install."
+echo "Windows version '${WIN_VERSION}' with ${DISK_SIZE} disk will automatically setup."
 echo ""
 echo "Access the installation via Web Browser at:"
 echo "http://YOUR_VPS_IP:8006"
