@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ==========================================
-# QWENCLOUD GENERATOR - TUI SETUP SCRIPT
+# QWENCLOUD GENERATOR - TUI SETUP SCRIPT V2
 # ==========================================
 
 # Pastikan whiptail terinstal untuk TUI
@@ -12,7 +12,7 @@ fi
 
 DIR_NAME="qwencloud-generator"
 
-# Fungsi untuk menginstal dependensi dasar
+# Fungsi untuk menginstal dependensi dasar (Fix Error 127)
 install_deps() {
     whiptail --title "Instalasi" --infobox "Mengupdate sistem dan menginstal dependensi... Mohon tunggu." 8 60
     sudo apt update && sudo apt upgrade -y
@@ -24,40 +24,48 @@ install_deps() {
 
     cd $DIR_NAME
 
-    # Setup Virtual Environment (Penting untuk Ubuntu terbaru)
+    # Setup Virtual Environment
     if [ ! -d "venv" ]; then
         python3 -m venv venv
     fi
     source venv/bin/activate
 
-    # Install Python Requirements & Playwright
+    # Install Python Requirements & Playwright (Diperbarui agar kebal Error 127)
     pip install -r requirements.txt
-    playwright install chromium
-    sudo playwright install-deps
+    python3 -m playwright install chromium
+    python3 -m playwright install-deps
 
-    whiptail --title "Sukses" --msgbox "Semua dependensi berhasil diinstal!" 8 45
+    whiptail --title "Sukses" --msgbox "Semua dependensi & komponen grafis Ubuntu berhasil diinstal!" 8 45
 }
 
-# Fungsi untuk setup Proxy
+# Fungsi untuk setup Proxy (Fix Connection Reset)
 setup_proxy() {
     cd $DIR_NAME
-    PROXY=$(whiptail --title "Setup Proxy" --inputbox "Masukkan detail proxy Anda (Format: username:password@host:port)\nKosongkan jika ingin menggunakan IP VPS." 10 60 3>&1 1>&2 2>&3)
+    PROXY=$(whiptail --title "Setup Proxy" --inputbox "Masukkan detail proxy Anda (Format: username:password@host:port)\n\nScript akan otomatis menambahkan http:// agar tidak terjadi error." 11 70 3>&1 1>&2 2>&3)
     
     if [ ! -z "$PROXY" ]; then
+        # Cek apakah pengguna sudah memasukkan http:// atau socks5://
+        if [[ ! "$PROXY" == http://* ]] && [[ ! "$PROXY" == socks5://* ]]; then
+            PROXY="http://$PROXY"
+        fi
+        
         echo "$PROXY" > proxy.txt
-        whiptail --title "Sukses" --msgbox "Proxy berhasil disimpan ke proxy.txt" 8 45
+        whiptail --title "Sukses" --msgbox "Proxy berhasil disimpan dengan format yang benar:\n\n$PROXY" 10 60
     fi
 }
 
-# Fungsi untuk setup Email List
+# Fungsi untuk setup Email List (Fix Double @gmail.com)
 setup_email() {
     cd $DIR_NAME
     source venv/bin/activate
-    EMAIL=$(whiptail --title "Generate Email List" --inputbox "Masukkan username Gmail utama Anda (tanpa @gmail.com):" 8 60 3>&1 1>&2 2>&3)
+    EMAIL=$(whiptail --title "Generate Email List" --inputbox "Masukkan username Gmail utama Anda:" 8 60 3>&1 1>&2 2>&3)
     
     if [ ! -z "$EMAIL" ]; then
-        python3 generate_email_list.py "$EMAIL" -o email_list.txt
-        whiptail --title "Sukses" --msgbox "Daftar email (dot-variants) berhasil dibuat!" 8 45
+        # Membuang @gmail.com jika pengguna tidak sengaja mengetiknya
+        CLEAN_EMAIL=${EMAIL%@gmail.com}
+        
+        python3 generate_email_list.py "$CLEAN_EMAIL" -o email_list.txt
+        whiptail --title "Sukses" --msgbox "Daftar email untuk '$CLEAN_EMAIL' berhasil dibuat!" 8 45
     fi
 }
 
@@ -66,13 +74,12 @@ setup_oauth() {
     cd $DIR_NAME
     source venv/bin/activate
     
-    whiptail --title "Setup OAuth (1/3)" --msgbox "Anda akan diarahkan ke editor teks untuk menyimpan kredensial.\n\nBuka file client_secret_xxx.json dari PC Anda, copy isinya, dan paste ke dalam editor yang akan terbuka. Setelah selesai, tekan Ctrl+X, lalu Y, lalu Enter." 12 70
+    whiptail --title "Setup OAuth (1/3)" --msgbox "Anda akan diarahkan ke editor teks untuk menyimpan kredensial.\n\nBuka file client_secret.json dari PC Anda, copy isinya, dan paste ke dalam editor yang akan terbuka. Setelah selesai, tekan Ctrl+X, lalu Y, lalu Enter." 12 70
     nano client_secret.json
 
     EMAIL_AUTH=$(whiptail --title "Setup OAuth (2/3)" --inputbox "Masukkan alamat EMAIL LENGKAP Anda (misal: nama@gmail.com):" 8 60 3>&1 1>&2 2>&3)
     
     if [ ! -z "$EMAIL_AUTH" ]; then
-        # Generate URL menggunakan Python
         URL=$(python3 -c "
 from gmail_auth import _default_client
 client = _default_client()
@@ -104,16 +111,15 @@ run_bot() {
     cd $DIR_NAME
     source venv/bin/activate
     
-    TARGET=$(whiptail --title "Jalankan Bot" --inputbox "Berapa banyak API Key yang ingin di-harvest?" 8 60 "5" 3>&1 1>&2 2>&3)
-    THREADS=$(whiptail --title "Jalankan Bot" --inputbox "Berapa banyak thread (browser bersamaan)?\nSaran: 2-5 untuk VPS 2GB." 10 60 "2" 3>&1 1>&2 2>&3)
+    TARGET=$(whiptail --title "Jalankan Bot" --inputbox "Berapa banyak API Key yang ingin di-harvest?" 8 60 "50" 3>&1 1>&2 2>&3)
+    THREADS=$(whiptail --title "Jalankan Bot" --inputbox "Berapa banyak thread (browser bersamaan)?\nSaran: 12-15 untuk VPS Anda." 10 60 "12" 3>&1 1>&2 2>&3)
     
-    if (whiptail --title "Jalankan Bot" --yesno "Jalankan dalam mode Invisible (Xvfb/Headless)?\nPilih YES untuk VPS." 8 60); then
+    if (whiptail --title "Jalankan Bot" --yesno "Jalankan dalam mode Invisible (Xvfb/Headless) agar tidak crash di VPS?" 8 60); then
         MODE="--headless"
     else
         MODE=""
     fi
 
-    # Bersihkan layar sebelum menjalankan bot
     clear
     echo "============================================="
     echo "MEMULAI BOT QWENCLOUD GENERATOR"
@@ -133,7 +139,7 @@ run_bot() {
 # ==========================================
 while true; do
     CHOICE=$(whiptail --title "QwenCloud Bot Manager" --menu "Pilih menu navigasi di bawah ini:" 18 60 7 \
-        "1" "Install Dependensi & Clone Repo (Wajib Pertama)" \
+        "1" "Install Dependensi & Perbaiki Komponen (PENTING)" \
         "2" "Setup File Proxy" \
         "3" "Generate Email List" \
         "4" "Setup Gmail OAuth (Login Google)" \
