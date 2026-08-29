@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Stop the script if any command fails
 set -e
 
@@ -7,7 +6,50 @@ echo "=================================================="
 echo "  Starting Docker & dockur/windows Installation   "
 echo "=================================================="
 
-# --- Version Selection ---
+# ==================================================
+# 0. CEK OS - Script ini HANYA untuk Ubuntu 22.04
+# ==================================================
+if [ -r /etc/os-release ]; then
+    . /etc/os-release
+else
+    echo "[ERROR] File /etc/os-release tidak ditemukan. Tidak bisa mendeteksi OS."
+    exit 1
+fi
+
+if [ "$ID" != "ubuntu" ] || [[ "$VERSION_ID" != 22.* ]]; then
+    echo "[ERROR] Script ini hanya mendukung Ubuntu 22.04!"
+    echo "OS kamu terdeteksi sebagai: ${PRETTY_NAME:-Tidak diketahui}"
+    exit 1
+fi
+echo "[OK] OS terdeteksi: $PRETTY_NAME"
+
+# ==================================================
+# Deteksi Total & Sisa Disk
+# ==================================================
+DISK_TOTAL_GB=$(df -BG --output=size / | tail -1 | tr -dc '0-9')
+DISK_AVAIL_GB=$(df -BG --output=avail / | tail -1 | tr -dc '0-9')
+# Sarankan sisakan minimal 10GB untuk Ubuntu + Docker
+if [ "$DISK_AVAIL_GB" -gt 15 ]; then
+    DISK_SUGGEST=$(( DISK_AVAIL_GB - 10 ))
+else
+    DISK_SUGGEST=0
+fi
+
+echo "--------------------------------------------------"
+echo "Informasi Disk VPS kamu:"
+echo "  Total disk       : ${DISK_TOTAL_GB} GB"
+echo "  Sisa/tersedia    : ${DISK_AVAIL_GB} GB"
+echo "  Maks. disarankan : ${DISK_SUGGEST} GB (sisakan ~10GB untuk Ubuntu & Docker)"
+echo "--------------------------------------------------"
+
+if [ "$DISK_SUGGEST" -le 0 ]; then
+    echo "[ERROR] Sisa disk terlalu kecil (${DISK_AVAIL_GB} GB). Minimal butuh sekitar 20GB kosong."
+    exit 1
+fi
+
+# ==================================================
+# Pilih Versi Windows
+# ==================================================
 echo "Available Windows Versions:"
 echo "  11   - Windows 11 Pro (7.9 GB)"
 echo "  11l  - Windows 11 LTSC (4.7 GB)"
@@ -20,88 +62,272 @@ echo "  2025 - Windows Server 2025 (7.6 GB)"
 echo "  2022 - Windows Server 2022 (6.0 GB)"
 echo "  2019 - Windows Server 2019 (5.3 GB)"
 echo "--------------------------------------------------"
-read -p "Enter the version code you want to install (Default is 11): " WIN_VERSION
-
-# Set default to 11 if the user leaves it blank
+read -p "Masukkan kode versi yang mau diinstall (Default: 11): " WIN_VERSION
 WIN_VERSION=${WIN_VERSION:-11}
-echo "Selected Version: $WIN_VERSION"
+echo "Versi terpilih: $WIN_VERSION"
 
-# --- Storage Selection ---
+# ==================================================
+# Alokasi Disk untuk Windows
+# ==================================================
 echo "--------------------------------------------------"
-echo "Disk Size Allocation"
-echo "Example: 50G, 200G, 250G"
-echo "Warning: Do not allocate 100% of your VPS storage. Leave space for Ubuntu!"
-read -p "Enter the disk size you want to allocate (Default is 64G): " DISK_SIZE
+echo "Alokasi Ukuran Disk Windows"
+echo "Contoh format: 50G, 100G, 200G"
+echo "Sisa disk kamu: ${DISK_AVAIL_GB} GB | Disarankan maksimal: ${DISK_SUGGEST}G"
+while true; do
+    read -p "Masukkan ukuran disk (Default: 64G): " DISK_SIZE
+    DISK_SIZE=${DISK_SIZE:-64G}
+    # Validasi format: angka + huruf G
+    if ! [[ "$DISK_SIZE" =~ ^[0-9]+G$ ]]; then
+        echo "[!] Format salah. Gunakan format seperti: 64G"
+        continue
+    fi
+    DISK_NUM=${DISK_SIZE%G}
+    if [ "$DISK_NUM" -gt "$DISK_AVAIL_GB" ]; then
+        echo "[!] ${DISK_SIZE} lebih besar dari sisa disk kamu (${DISK_AVAIL_GB} GB). Pilih ukuran lebih kecil."
+        continue
+    fi
+    if [ "$DISK_NUM" -gt "$DISK_SUGGEST" ]; then
+        echo "[PERINGATAN] ${DISK_SIZE} melebihi batas yang disarankan (${DISK_SUGGEST}G)."
+        read -p "Tetap lanjut dengan ukuran ini? (y/n): " disk_ok
+        [ "$disk_ok" != "y" ] && continue
+    fi
+    break
+done
+echo "Ukuran disk terpilih: $DISK_SIZE"
 
-# Set default to 64G if the user leaves it blank
-DISK_SIZE=${DISK_SIZE:-64G}
-echo "Selected Disk Size: $DISK_SIZE"
+# ==================================================
+# Username & Password Windows
+# ==================================================
+echo "--------------------------------------------------"
+echo "Akun Login Windows (untuk RDP)"
+echo "Catatan: username & password hanya diterapkan saat INSTALL PERTAMA."
+read -p "Username (Default: Docker): " WIN_USER
+WIN_USER=${WIN_USER:-Docker}
+
+while true; do
+    read -s -p "Password (kosongkan untuk default 'admin'): " WIN_PASS
+    echo ""
+    if [ -z "$WIN_PASS" ]; then
+        WIN_PASS="admin"
+        echo "[!] Menggunakan password default: admin (disarankan ganti setelah login)"
+        break
+    fi
+    case "$WIN_PASS" in
+        *\"*|*\'*|*\\*|*\$*|*\ *)
+            echo "[!] Password tidak boleh mengandung spasi, tanda kutip, backslash, atau \$. Coba lagi."
+            continue
+            ;;
+    esac
+    read -s -p "Ulangi password: " WIN_PASS2
+    echo ""
+    if [ "$WIN_PASS" = "$WIN_PASS2" ]; then
+        break
+    fi
+    echo "[!] Password tidak sama, coba lagi."
+done
+
+# ==================================================
+# Fungsi bantu: tanya port + validasi
+# ==================================================
+ask_port() {
+    local label=$1
+    local default=$2
+    local result
+    while true; do
+        read -p "Port ${label} (Default: ${default}): " result
+        result=${result:-$default}
+        if ! [[ "$result" =~ ^[0-9]+$ ]] || [ "$result" -lt 1 ] || [ "$result" -gt 65535 ]; then
+            echo "[!] Port harus angka 1-65535." >&2
+            continue
+        fi
+        if ss -tuln | grep -q ":${result} "; then
+            echo "[!] Port ${result} sudah dipakai aplikasi lain. Pilih port lain." >&2
+            continue
+        fi
+        echo "$result"
+        return
+    done
+}
+
+# ==================================================
+# Port RDP
+# ==================================================
+echo "--------------------------------------------------"
+RDP_PORT=$(ask_port "RDP" 3389)
+echo "Port RDP: $RDP_PORT"
+
+# ==================================================
+# Opsi Akses Web Browser (Viewer Port 8006)
+# ==================================================
+echo "--------------------------------------------------"
+echo "Akses via Web Browser (untuk memantau proses install):"
+echo "  1) Aktif terus (bisa diakses kapan saja)"
+echo "  2) Nonaktif total (tidak bisa dipantau via browser)"
+echo "  3) Aktif saat install saja, OTOMATIS dimatikan setelah Windows siap (RDP aktif)"
+while true; do
+    read -p "Pilih opsi (Default: 1): " WEB_MODE
+    WEB_MODE=${WEB_MODE:-1}
+    [[ "$WEB_MODE" =~ ^[123]$ ]] && break
+    echo "[!] Pilih 1, 2, atau 3."
+done
+
+WEB_PORT=""
+if [ "$WEB_MODE" != "2" ]; then
+    WEB_PORT=$(ask_port "Web Browser" 8006)
+    echo "Port Web: $WEB_PORT"
+else
+    echo "Akses web browser: DINONAKTIFKAN"
+fi
 echo "=================================================="
 
+# ==================================================
 # 1. Update & Upgrade System Packages
+# ==================================================
 echo "--> Updating system package list..."
 sudo apt update && sudo apt upgrade -y
 
 # 2. Install Basic Dependencies
-echo "--> Installing Git, Curl, and CPU Checker..."
-sudo apt install -y git curl cpu-checker
+echo "--> Installing Curl and CPU Checker..."
+sudo apt install -y curl cpu-checker
 
-# 3. Check KVM Validation (Crucial for Windows Performance)
+# 3. Cek KVM (penting untuk performa Windows)
 echo "--> Checking KVM Virtualization status..."
 if [ -e /dev/kvm ]; then
-    echo "[OK] /dev/kvm found. KVM acceleration is active."
+    echo "[OK] /dev/kvm ditemukan. Akselerasi KVM aktif."
 else
-    echo "[WARNING] /dev/kvm NOT found!"
-    echo "Windows might run very slowly or fail to boot."
-    echo "Please ensure your VPS supports KVM / Nested Virtualization."
-    read -p "Do you still want to continue? (y/n): " temp_choice
+    echo "[WARNING] /dev/kvm TIDAK ditemukan!"
+    echo "Windows mungkin sangat lambat atau gagal boot."
+    echo "Pastikan VPS kamu mendukung KVM / Nested Virtualization."
+    read -p "Tetap lanjut? (y/n): " temp_choice
     if [ "$temp_choice" != "y" ]; then
-        echo "Installation aborted."
+        echo "Instalasi dibatalkan."
         exit 1
     fi
 fi
 
-# 4. Install Docker Using the Official Script
+# 4. Install Docker
 echo "--> Downloading and installing the latest version of Docker..."
-curl -fsSL https://get.docker.com -o get-docker.sh
-sudo sh get-docker.sh
-rm get-docker.sh
+if command -v docker >/dev/null 2>&1; then
+    echo "[OK] Docker sudah terinstall, skip..."
+else
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    rm get-docker.sh
+fi
 
-# 5. Ensure Docker Service is Running
+# 5. Pastikan Docker jalan
 echo "--> Enabling and starting Docker service..."
 sudo systemctl enable --now docker
 
-# 6. Clone the dockur/windows Repository
-echo "--> Cloning dockur/windows repository..."
-if [ -d "windows" ]; then
-    echo "The 'windows' directory already exists. Skipping clone..."
-else
-    git clone https://github.com/dockur/windows.git
+# ==================================================
+# 6. Buat docker-compose.yml
+# ==================================================
+INSTALL_DIR="$HOME/windows-rdp"
+echo "--> Menyiapkan konfigurasi di ${INSTALL_DIR}..."
+mkdir -p "$INSTALL_DIR"
+cd "$INSTALL_DIR"
+
+if [ -d "./storage" ] && [ -n "$(ls -A ./storage 2>/dev/null)" ]; then
+    echo "[PERINGATAN] Folder storage lama ditemukan. Username/password baru TIDAK akan"
+    echo "diterapkan karena Windows sudah pernah terinstall. Hapus folder"
+    echo "${INSTALL_DIR}/storage jika ingin install ulang dari nol."
 fi
 
-# 7. Apply the selected settings and Execute Docker Compose
-echo "--> Applying Windows Version: $WIN_VERSION and Disk Size: $DISK_SIZE..."
-cd windows
+# Susun daftar port sesuai pilihan
+PORTS_YAML="      - \"${RDP_PORT}:3389/tcp\"
+      - \"${RDP_PORT}:3389/udp\""
+if [ "$WEB_MODE" != "2" ]; then
+    PORTS_YAML="      - \"${WEB_PORT}:8006\"
+${PORTS_YAML}"
+fi
 
-# Create a docker-compose override file to safely inject VERSION and DISK_SIZE variables
-cat <<EOF > docker-compose.override.yml
+cat > docker-compose.yml <<EOF
 services:
   windows:
+    image: dockurr/windows
+    container_name: windows
     environment:
       VERSION: "${WIN_VERSION}"
       DISK_SIZE: "${DISK_SIZE}"
+      USERNAME: "${WIN_USER}"
+      PASSWORD: "${WIN_PASS}"
+    devices:
+      - /dev/kvm
+      - /dev/net/tun
+    cap_add:
+      - NET_ADMIN
+    ports:
+${PORTS_YAML}
+    volumes:
+      - ./storage:/storage
+    restart: always
+    stop_grace_period: 2m
 EOF
 
 echo "--> Starting docker compose in the background..."
 sudo docker compose up -d
 
-# Finish
+# ==================================================
+# 7. Mode 3: Watcher otomatis matikan akses web
+# ==================================================
+if [ "$WEB_MODE" = "3" ]; then
+    echo "--> Menyiapkan auto-disable akses web setelah install selesai..."
+    cat > auto-disable-web.sh <<'WEOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+echo "$(date) - Menunggu instalasi Windows selesai (deteksi service RDP)..."
+OK=0
+# Cek tiap 30 detik, maksimal ~6 jam
+for i in $(seq 1 720); do
+    if docker exec windows bash -c 'timeout 3 bash -c "</dev/tcp/20.20.20.21/3389"' 2>/dev/null; then
+        OK=$((OK+1))
+    else
+        OK=0
+    fi
+    if [ "$OK" -ge 3 ]; then
+        echo "$(date) - RDP terdeteksi aktif. Windows sudah siap."
+        break
+    fi
+    sleep 30
+done
+if [ "$OK" -lt 3 ]; then
+    echo "$(date) - TIMEOUT: RDP tidak terdeteksi dalam 6 jam. Akses web TIDAK dimatikan."
+    exit 1
+fi
+# Beri jeda agar Windows benar-benar stabil setelah install
+sleep 60
+echo "$(date) - Menonaktifkan akses web browser..."
+sed -i '/:8006"/d' docker-compose.yml
+docker compose up -d
+echo "$(date) - SELESAI. Akses web browser sudah dimatikan. Gunakan RDP untuk login."
+WEOF
+    chmod +x auto-disable-web.sh
+    sudo nohup ./auto-disable-web.sh > auto-disable-web.log 2>&1 &
+    echo "[OK] Watcher berjalan di background. Cek progres: cat ${INSTALL_DIR}/auto-disable-web.log"
+    echo "[CATATAN] Saat web dimatikan, container di-recreate sehingga Windows restart 1x."
+fi
+
+# ==================================================
+# Selesai
+# ==================================================
+PUBLIC_IP=$(curl -s --max-time 5 ifconfig.me 2>/dev/null || echo "IP_VPS_KAMU")
 echo "=================================================="
-echo "                 PROCESS COMPLETE!                "
+echo "                 PROSES SELESAI!                  "
 echo "=================================================="
-echo "Docker has been installed and the container is running."
-echo "Windows version '${WIN_VERSION}' with ${DISK_SIZE} disk will automatically setup."
+echo "Windows versi '${WIN_VERSION}' dengan disk ${DISK_SIZE} sedang diinstall otomatis."
 echo ""
-echo "Access the installation via Web Browser at:"
-echo "http://YOUR_VPS_IP:8006"
+if [ "$WEB_MODE" != "2" ]; then
+    echo "Pantau proses install via Web Browser:"
+    echo "  http://${PUBLIC_IP}:${WEB_PORT}"
+    if [ "$WEB_MODE" = "3" ]; then
+        echo "  (akses web akan OTOMATIS dimatikan setelah install selesai)"
+    fi
+    echo ""
+fi
+echo "Setelah install selesai, login via RDP:"
+echo "  Alamat   : ${PUBLIC_IP}:${RDP_PORT}"
+echo "  Username : ${WIN_USER}"
+echo "  Password : (yang kamu masukkan tadi)"
+echo ""
+echo "Lokasi konfigurasi: ${INSTALL_DIR}"
 echo "=================================================="
