@@ -1,7 +1,8 @@
 /**
  * ============================================================
- *  REWRITTEN / DE-OBFUSCATED VERSION
- *  Guard timestamp dibuat "fresh" (dihitung saat runtime)
+ *  REWRITTEN / DE-OBFUSCATED VERSION  (bugfix)
+ *  - Fix: ReferenceError TrustedTypePolicy (TDZ)
+ *  - Guard: timestamp "fresh" (dihitung saat runtime)
  *  ⚠️ UNTUK ANALISIS SAJA - JANGAN DIJALANKAN
  * ============================================================
  */
@@ -9,7 +10,6 @@
 (() => {
   // ----------------------------------------------------------
   // 0. Guard: kedaluwarsa 30 hari sejak script dijalankan
-  //    (dulu hardcoded 1794646912000)
   // ----------------------------------------------------------
   const TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 hari
   const EXPIRES_AT = Date.now() + TTL_MS;
@@ -182,12 +182,16 @@
 
   // ----------------------------------------------------------
   // 6. Bajak Trusted Types createScriptURL
+  //    FIX: variabel lokal diberi nama berbeda agar tidak
+  //         bentrok dengan global TrustedTypePolicy (TDZ)
   // ----------------------------------------------------------
-  const TrustedTypePolicy = win.TrustedTypePolicy && TrustedTypePolicy.prototype;
-  if (TrustedTypePolicy && !win._gT) {
+  const trustedTypeProto =
+    win.TrustedTypePolicy && win.TrustedTypePolicy.prototype;
+
+  if (trustedTypeProto && !win._gT) {
     win._gT = 1;
-    const originalCreateScriptURL = TrustedTypePolicy.createScriptURL;
-    TrustedTypePolicy.createScriptURL = function (input, ...args) {
+    const originalCreateScriptURL = trustedTypeProto.createScriptURL;
+    trustedTypeProto.createScriptURL = function (input, ...args) {
       return originalCreateScriptURL.call(this, win._gR(input), ...args);
     };
   }
