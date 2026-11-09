@@ -1,4 +1,3 @@
-cat << 'EOF' > setup-hermes.sh
 #!/usr/bin/env bash
 set -e
 
@@ -20,14 +19,12 @@ grep -qxF "$PATH_LINE" ~/.bashrc || echo "$PATH_LINE" >> ~/.bashrc
 # 3. Install Hermes jika belum terinstal
 if ! command -v hermes &> /dev/null; then
     echo "[3/6] Hermes belum ditemukan. Mengunduh dan menginstal Hermes..."
-    # Gunakan || true agar error user-scope gateway bawaan install.sh tidak menghentikan set -e
     curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash || true
     export PATH="$HOME/.local/bin:$HOME/.hermes/bin:$PATH"
 else
     echo "[3/6] ✓ Hermes sudah terinstal di: $(which hermes)"
 fi
 
-# Pastikan biner hermes benar-benar sudah terpasang sebelum lanjut
 if ! command -v hermes &> /dev/null; then
     echo "✗ Gagal mengunduh biner hermes."
     exit 1
@@ -50,4 +47,3 @@ echo "===================================================="
 echo "✅ Selesai! Status Hermes Gateway saat ini:"
 echo "===================================================="
 hermes gateway status --system || systemctl status hermes-gateway --no-pager
-EOF
